@@ -4,6 +4,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 import os
 import requests
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -35,43 +40,57 @@ def home():
 def ton_webhook():
     try:
         data = request.get_json()
-        user_id = data.get("user_id")
+        if not data:
+            logger.error("No JSON data received")
+            return jsonify({"error": "Invalid JSON"}), 400
+
+        user_id = data.get("user_id", "anonymous")
         wallet = data.get("user")
-        to = data.get("to")
-        amount_nano = int(data.get("amount", 0))
-        amount_ton = round(amount_nano / 1e9, 4)
+        to_address = data.get("to")
+        amount_nano = data.get("amount")
         usd = data.get("usd", "~$2")
+
+        # Validate required fields
+        if not all([wallet, to_address, amount_nano]):
+            logger.error(f"Missing fields: {data}")
+            return jsonify({"error": "Missing required fields"}), 400
+
+        # Convert and validate amount
+        try:
+            amount_nano = int(amount_nano)
+            amount_ton = round(amount_nano / 1e9, 6)
+        except (ValueError, TypeError):
+            logger.error(f"Invalid amount: {amount_nano}")
+            return jsonify({"error": "Invalid amount"}), 400
 
         # Save to DB
         new_tx = Transaction(
             user_id=user_id,
             wallet_address=wallet,
-            to_address=to,
+            to_address=to_address,
             amount=str(amount_ton),
             usd=usd
         )
         db.session.add(new_tx)
         db.session.commit()
+        logger.info(f"Transaction saved: user_id={user_id}, wallet={wallet}, amount={amount_ton}")
 
         # Notify user on Telegram
-        if BOT_TOKEN and user_id:
-            text = (
-                f"✅ *TON Transaction Signed!*\n\n"
-                f"💼 Wallet: `{wallet}`\n"
-                f"💸 Amount: `{amount_ton} TON` (~{usd})\n"
-                f"📥 To: `{to}`\n"
-                f"🕐 Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-            )
+        if BOT_TOKEN and user_id != "anonymous":
+            text = f"User {user_id} sent {amount_ton} TON from {wallet}"
             telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            requests.post(telegram_url, json={
+            response = requests.post(telegram_url, json={
                 "chat_id": user_id,
                 "text": text,
                 "parse_mode": "Markdown"
             })
+            if not response.ok:
+                logger.error(f"Telegram notification failed: {response.text}")
 
         return jsonify({"status": "success", "message": "Transaction saved"}), 200
 
     except Exception as e:
+        logger.error(f"Webhook error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # Run locally
