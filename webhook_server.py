@@ -50,7 +50,7 @@ def ton_webhook():
         wallet = data.get("user")
         to_address = data.get("to")
         amount_nano = data.get("amount")
-        usd = data.get("usd", "~$2")
+        usd = data.get("usd", "~$5")  # Changed from "~$2" to "~$5"
 
         # Validate required fields
         if not all([wallet, to_address, amount_nano]):
